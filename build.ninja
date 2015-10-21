@@ -1,0 +1,12 @@
+cflags = -g -fPIC -Isrc -ansi -pedantic -Wall -Wextra -Weverything
+ldflags = 
+
+rule compile
+ command = clang $cflags -c $in -o $out
+
+rule link
+ command = clang -fPIC -o $out -shared $in $ldflags
+
+build obj/csv.o: compile src/csv.c
+build bin/libcsv.so: link obj/csv.o
+
