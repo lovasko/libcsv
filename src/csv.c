@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "csv.h"
 
@@ -23,38 +24,56 @@ csv_open(struct csv* file,
 		return CSV_E_ROW_LENGTH;
 
 	file->fd = open(path, O_RDONLY);
+	if (file->fd < 0)
+		return CSV_E_PATH;
+
 	file->aux = NULL;
 	file->buffer = malloc(sizeof(char) * optimal_row_length);
 	file->orl = optimal_row_length;
 	file->cc = column_count;
 	file->sep = separator;
 	file->fields = malloc(sizeof(char*) * column_count);
+
 	memset(file->buffer, '\0', file->orl);
+	file->fields[0] = &file->buffer[0];
 
 	return CSV_OK;
 }
 
-static void
-skip_row(int fd)
-{
-	char c;
-
-	c = '\0';
-	while (c != '\n')
-		read(fd, &c, 1);
-}
-
 int
-csv_skip_rows(struct csv* file, size_t n)
+csv_skip_line(struct csv* file, size_t n)
 {
+	char buffer[4096];
+	size_t skipped;
+	ssize_t buf_size;
+	ssize_t i;
+
 	if (file == NULL)
 		return CSV_E_NULL;
 
 	if (n == 0)
 		return CSV_OK;
 
-	for (i = 0; i < n; i++)
-		skip_row(file->fd);
+	skipped = 0;
+	while (skipped != n) {
+		buf_size = read(fd, buffer, 4096);
+
+		if (buf_size == -1)
+			return CSV_E_IO;
+
+		if (buf_size == 0)
+			return CSV_E_NOT_ENOUGH_LINES;			
+
+		for (i = 0; i < buf_size; i++) {
+			if (buffer[i] == '\n') {
+				skipped++;
+				if (skipped == n) {
+					lseek(file->fd, buf_size - i, SEEK_CUR);
+					return CSV_OK;
+				}
+			}
+		}
+	}
 
 	return CSV_OK;
 }
@@ -65,7 +84,6 @@ fill_fields(struct csv* file)
 	size_t fields;
 	size_t i;
 
-	file->fields[0] = &file->buffer[0];
 	fields = 1;
 	for (i = 1; i < file->orl; i++) {
 		if (file->buffer[i] == file->sep) {
@@ -94,21 +112,29 @@ fill_fields(struct csv* file)
 int
 csv_read_row(struct csv* file, char*** out_fields)
 {
+	int ret;
+
 	if (file == NULL || out_fields == NULL)
 		return CSV_E_NULL;
 
+	while (1) {
+		bytes_read = read(file->fd, file->buffer, 65536);
+		if (bytes_read == -1)
+			return CSV_E_IO;
+	}
+
 	if (file->aux != NULL) {
+		memmove(&file->buffer[0], file->aux[], );
 		free(file->aux);
 		file->aux = NULL;
 	}
 
 	if (read(file->fd, file->buffer, file->orl));
 
-	switch (fill_fields(file)) {
-		case 
-		default:
-			return CSV_E_UNKNOWN;
-	}
+	ret = fill_fields(file);
+	*out_fields = file->fields;
+	
+	return CSV_OK;
 }
 
 int
