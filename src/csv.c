@@ -1,15 +1,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "csv.h"
 
 int
-csv_open(struct csv* file,
-         char* path,
-         char separator,
-         size_t column_count,
-         size_t optimal_row_length)
+csv_open(struct csv* file, char* path, char separator, size_t column_count)
 {
 	if (file == NULL || path == NULL)
 		return CSV_E_NULL;
@@ -20,21 +17,18 @@ csv_open(struct csv* file,
 	if (separator == '\n')
 		return CSV_E_NEWLINE;
 
-	if (optimal_row_length == 0)
-		return CSV_E_ROW_LENGTH;
-
 	file->fd = open(path, O_RDONLY);
 	if (file->fd < 0)
 		return CSV_E_PATH;
 
-	file->aux = NULL;
-	file->buffer = malloc(sizeof(char) * optimal_row_length);
-	file->orl = optimal_row_length;
 	file->cc = column_count;
 	file->sep = separator;
 	file->fields = malloc(sizeof(char*) * column_count);
 
-	memset(file->buffer, '\0', file->orl);
+	file->i = 0;
+	file->bytes_read = 0;
+
+	memset(file->buffer, '\0', 65536);
 	file->fields[0] = &file->buffer[0];
 
 	return CSV_OK;
@@ -56,7 +50,7 @@ csv_skip_line(struct csv* file, size_t n)
 
 	skipped = 0;
 	while (skipped != n) {
-		buf_size = read(fd, buffer, 4096);
+		buf_size = read(file->fd, buffer, 4096);
 
 		if (buf_size == -1)
 			return CSV_E_IO;
@@ -78,62 +72,78 @@ csv_skip_line(struct csv* file, size_t n)
 	return CSV_OK;
 }
 
-static int
-fill_fields(struct csv* file)
-{
-	size_t fields;
-	size_t i;
-
-	fields = 1;
-	for (i = 1; i < file->orl; i++) {
-		if (file->buffer[i] == file->sep) {
-			file->buffer[i] = '\0';	
-			file->fields[fields] = &file->buffer[i+1];
-			fields++;
-
-			if (fields > file->cc)
-				return CSV_E_TOO_MANY_FIELDS;
-		}
-
-		if (file->buffer[i] == '\n') {
-			if (fields == file->cc)
-				return CSV_OK;
-			else
-				return CSV_E_TOO_FEW_FIELDS;
-		}
-	}
-
-	/* being here means that we are in the middle of a field,
-	 * there is no new line and we need to alloc more to the aux */
-	if (fields < file->cc)
-		return CSV_NEED_MORE;
-}
-
 int
-csv_read_row(struct csv* file, char*** out_fields)
+csv_read_record(struct csv* file, char*** out_fields)
 {
-	int ret;
+	int record_len;
+	unsigned int fields;
 
 	if (file == NULL || out_fields == NULL)
 		return CSV_E_NULL;
 
-	while (1) {
-		bytes_read = read(file->fd, file->buffer, 65536);
-		if (bytes_read == -1)
+	if (file->i == file->bytes_read) {
+		file->bytes_read = read(file->fd, file->buffer, 65536);
+		if (file->bytes_read == -1)
 			return CSV_E_IO;
+
+		if (file->bytes_read == 0)
+			return CSV_END;
+
+		file->i = 0;
 	}
 
-	if (file->aux != NULL) {
-		memmove(&file->buffer[0], file->aux[], );
-		free(file->aux);
-		file->aux = NULL;
+	file->fields[0] = &file->buffer[file->i];
+	fields = 1;
+	record_len = 0;
+	for (; file->i < file->bytes_read; file->i++) {
+		if (file->buffer[file->i] == file->sep) {
+			file->buffer[file->i] = '\0';
+			file->fields[fields] = &file->buffer[file->i+1];
+			fields++;
+
+			if (fields == file->cc) {
+				while (1) {
+					if (file->buffer[file->i] == '\n') {
+						file->buffer[file->i] = '\0';
+						file->i++;
+						*out_fields = file->fields;
+						return CSV_OK;
+					}
+
+					if (file->buffer[file->i] == file->sep)
+						return CSV_E_TOO_MANY_FIELDS;
+
+					file->i++;
+					record_len++;
+
+					if (file->i == file->bytes_read) {
+						memset(file->buffer, '\0', 65536);
+						lseek(file->fd, -record_len, SEEK_CUR);
+						return csv_read_record(file, out_fields);
+					}
+				}
+			}
+		}
+
+		if (file->buffer[file->i] == '\n')
+			return CSV_E_TOO_FEW_FIELDS;
 	}
 
-	if (read(file->fd, file->buffer, file->orl));
+	return CSV_OK;
+}
 
-	ret = fill_fields(file);
-	*out_fields = file->fields;
-	
+int
+csv_error_string(int code, char** out_error_string)
+{
+	char* strings[] = {
+		"OK",
+		"Null"
+	};
+	if (out_error_string == NULL)
+		return CSV_E_NULL;
+
+	/* TODO define and check for CSV_E_MAX */
+	*out_error_string = strings[code];
 	return CSV_OK;
 }
 
@@ -143,10 +153,7 @@ csv_close(struct csv* file)
 	if (file == NULL)
 		return CSV_E_NULL;
 
-	free(file->buffer);
-	free(file->aux);
 	free(file->fields);
-
 	close(file->fd);
 }
 
