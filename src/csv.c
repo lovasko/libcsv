@@ -37,6 +37,17 @@ csv_open(struct csv* file, char* path, char separator, size_t field_count)
 	return CSV_OK;
 }
 
+static int
+rewind_redo(struct csv* file, int bytes_back, char*** out_fields)
+{
+	memset(file->buffer, '\0', __CSV_BUF_SIZE);
+	errno = 0;
+	if (lseek(file->fd, bytes_back, SEEK_CUR) == -1)
+		return CSV_E_IO;
+
+	return csv_read_record(file, out_fields);
+}
+
 int
 csv_read_record(struct csv* file, char*** out_fields)
 {
@@ -81,14 +92,8 @@ csv_read_record(struct csv* file, char*** out_fields)
 					file->i++;
 					record_len++;
 
-					if (file->i == file->bytes_read) {
-						memset(file->buffer, '\0', __CSV_BUF_SIZE);
-						errno = 0;
-						if (lseek(file->fd, -record_len, SEEK_CUR) == -1)
-							return CSV_E_IO;
-
-						return csv_read_record(file, out_fields);
-					}
+					if (file->i == file->bytes_read)
+						return rewind_redo(file, -record_len, out_fields);
 				}
 			}
 		}
@@ -97,14 +102,8 @@ csv_read_record(struct csv* file, char*** out_fields)
 			return CSV_E_TOO_FEW_FIELDS;
 	}
 
-	if (fields < file->field_count) {
-		memset(file->buffer, '\0', __CSV_BUF_SIZE);
-		errno = 0;
-		if (lseek(file->fd, -record_len, SEEK_CUR) == -1)
-			return CSV_E_IO;
-
-		return csv_read_record(file, out_fields);
-	}
+	if (fields < file->field_count)
+		return rewind_redo(file, -record_len, out_fields);
 
 	return CSV_OK;
 }
