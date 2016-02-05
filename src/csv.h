@@ -1,3 +1,6 @@
+#ifndef CSV_H
+#define CSV_H
+
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -30,4 +33,6 @@ int csv_open(struct csv* file, char* path, char separator, size_t field_count);
 int csv_read_record(struct csv* file, char*** out_fields);
 int csv_error_string(int code, char** out_error_string);
 int csv_close(struct csv* file);
+
+#endif
 
